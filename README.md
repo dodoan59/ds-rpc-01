@@ -127,7 +127,7 @@ The application will be available at `http://localhost:8501`
 ---
 ## Demo
 https://github.com/user-attachments/assets/0629dcd7-80eb-4f87-812e-6c92d51edd45
----
+
 This project was made as a part of the [Codebasics Resume Challenge] for educational and portfolio purposes.
 
 All user data used is fictional for simulation purposes.
