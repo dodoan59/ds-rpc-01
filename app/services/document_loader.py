@@ -1,42 +1,59 @@
-import os
+from typing import List
+from pathlib import Path
 import pandas as pd
-from typing import Dict, List, Any
+from langchain.schema import Document
 
-# Return list of dictionaries containing 'content' and 'type'
-def load_data_for_role(role: str) -> List[Dict[str, Any]]:
+def load_data_for_role(role: str) -> List[Document]:
     """
-    Load data for a specific role.
-    Returns a list of dictionaries, each containing 'content' and 'type'.
+    Load data for a specific role and return LangChain Documents.
     """
-    data_path = os.path.join("resources", "data", role)
-    if not os.path.exists(data_path):
+    data_path = Path("resources/data") / role
+    
+    if not data_path.exists():
         print(f"Warning: Data path does not exist for role: {role}")
         return []
 
     documents = []
-    for filename in os.listdir(data_path):
-        filepath = os.path.join(data_path, filename)
-        file_extension = filename.split('.')[-1]
 
-        if file_extension == "md":
+    for filepath in data_path.iterdir():
+        if filepath.is_file():
             try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    # Add content and type
-                    documents.append({"content": f.read(), "type": "md"})
+                if filepath.suffix.lower() == ".md":
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    documents.append(
+                        Document(
+                            page_content=content,
+                            metadata={
+                                "source": filepath.name,
+                                "role": role.lower(),
+                                "type": "md"
+                            }
+                        )
+                    )
+
+                # elif filepath.suffix.lower() == ".csv":
+                #     df = pd.read_csv(filepath)
+                #     rows = df.to_dict(orient="records")
+                    
+                #     for row in rows:
+                #         content = "\n".join(f"{k}: {v}" for k, v in row.items() if pd.notna(v))
+                #         documents.append(
+                #             Document(
+                #                 page_content=content,
+                #                 metadata={
+                #                     "source": filepath.name,
+                #                     "role": role.lower(),
+                #                     "type": "csv"
+                #                 }
+                #             )
+                #         )
+                #     print(f"Loaded CSV file: {filepath.name} ({len(rows)} rows)")
+
+                else:
+                    print(f"Skipping unsupported file type: {filepath.name}")
+
             except Exception as e:
-                print(f"Error reading text/markdown file {filepath}: {e}")
-        
-        elif file_extension == "csv":
-            try:
-                df = pd.read_csv(filepath)
-                for index, row in df.iterrows():
-                    row_text = ", ".join([f"{col}: {val}" for col, val in row.items()])
-                    # Add content and type
-                    documents.append({"content": row_text, "type": "csv"})
-                print(f"Loaded CSV file: {filepath}")
-            except Exception as e:
-                print(f"Error reading CSV file {filepath}: {e}")
-        else:
-            print(f"Skipping unsupported file type: {filename}")
+                print(f"Error reading file {filepath}: {e}")
 
     return documents

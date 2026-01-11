@@ -2,172 +2,176 @@ import streamlit as st
 import requests
 from typing import Optional, Dict
 import base64
+import json
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-# Configuration
-API_BASE_URL = "http://localhost:8000"  # Update this if your FastAPI server is running elsewhere
+# --- CONFIG API ---
+API_BASE_URL = "http://localhost:8000"
 
-# Page configuration
+# --- CONFIG PAGE ---
 st.set_page_config(
-    page_title="RAG Chat Application",
-    page_icon="🤖",
+    page_title="RAG RBAC System",
+    page_icon="❇️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# Session state initialization
+# --- INIT SESSION STATE ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
     st.session_state.username = ""
     st.session_state.role = ""
+    st.session_state.description = ""
     st.session_state.messages = []
-    st.session_state.auth_token = ""
+    st.session_state.auth_header = ""
 
-# Utility functions
+# --- HELPER FUNCTIONS ---
 def get_basic_auth_header(username: str, password: str) -> str:
-    """Create Basic Auth header from username and password"""
+    """Create Basic Auth header"""
     credentials = f"{username}:{password}"
     encoded_credentials = base64.b64encode(credentials.encode("utf-8")).decode("utf-8")
     return f"Basic {encoded_credentials}"
 
 def make_authenticated_request(endpoint: str, method: str = "get", data: Optional[Dict] = None):
-    """Make an authenticated request to the API"""
+    """Send authenticated request with Auth Header"""
     headers = {
-        "Authorization": st.session_state.auth_token,
+        "Authorization": st.session_state.auth_header,
         "Content-Type": "application/json"
     }
+    url = f"{API_BASE_URL}{endpoint}"
     
     try:
-        if method.lower() == "get":
-            response = requests.get(f"{API_BASE_URL}{endpoint}", headers=headers)
-        elif method.lower() == "post":
-            response = requests.post(
-                f"{API_BASE_URL}{endpoint}",
-                headers=headers,
-                json=data or {}
-            )
+        if method.lower() == "post":
+            response = requests.post(url, headers=headers, json=data)
         else:
-            return None, "Unsupported HTTP method"
+            response = requests.get(url, headers=headers)
             
-        response.raise_for_status()
-        return response.json(), None
-    except requests.exceptions.RequestException as e:
-        return None, str(e)
+        if response.status_code == 200:
+            return response.json(), None
+        elif response.status_code == 401:
+            st.session_state.authenticated = False # Auto logout if session expired
+            return None, "Session expired or invalid credentials."
+        else:
+            return None, f"Server error ({response.status_code}): {response.text}"
+            
+    except Exception as e:
+        return None, f"Failed to connect to server: {str(e)}"
 
-# Authentication
-def login():
-    """Login form"""
-    st.title("🔑 Login")
-    
-    with st.form("login_form"):
+# --- LOGIN PAGE ---
+def login_page():
+    st.title("🔐 Login RAG RBAC System")
+    st.markdown("System to search employee information & internal regulations (Role-based access control).")
+
+    col1, col2 = st.columns([1, 1])
+
+    with col1:
+        st.subheader("Login Information")
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login")
         
-        if submit:
-            if not username or not password:
-                st.error("Please enter both username and password")
-                return
+        if st.button("Login", type="primary"):
+            if username and password:
+                # Create auth header to check login
+                auth_header = get_basic_auth_header(username, password)
                 
-            # Create auth token
-            auth_token = get_basic_auth_header(username, password)
-            
-            # Test login
-            try:
-                response = requests.get(
-                    f"{API_BASE_URL}/login",
-                    headers={"Authorization": auth_token}
-                )
-                response.raise_for_status()
-                user_data = response.json()
-                
-                # Update session state
-                st.session_state.authenticated = True
-                # Use username from response if available, otherwise fallback to the entered one
-                st.session_state.username = user_data.get("username", username)
-                st.session_state.role = user_data.get("role")
-                st.session_state.auth_token = auth_token
-                st.session_state.messages = []
-                st.rerun()
-                
-            except requests.exceptions.RequestException as e:
-                st.error(f"Login failed: {str(e)}")
+                # Call API check login (or endpoint /login)
+                headers = {"Authorization": auth_header}
+                try:
+                    res = requests.get(f"{API_BASE_URL}/login", headers=headers)
+                    if res.status_code == 200:
+                        data = res.json()
+                        # Save info to session
+                        st.session_state.authenticated = True
+                        st.session_state.username = username
+                        st.session_state.auth_header = auth_header
+                        st.session_state.role = data.get("role", "Unknown")
+                        st.session_state.description = data.get("description", "")
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password!")
+                except Exception as e:
+                    st.error(f"Connection error: {e}")
+            else:
+                st.warning("Please enter full information.")
 
-# Main chat interface
+    # Show User Demo table for testing
+    with col2:
+        st.info("💡 **User Demo (RBAC Demo)**")
+        st.markdown("""
+        | Role | Username | Password |
+        |---|---|---|
+        | **HR** | `Natasha` | `hrpass123` |
+        | **Finance** | `Sam` | `financepass` |
+        | **Engineer** | `Tony` | `password123` |
+        | **Marketing** | `Bruce` | `password123` |
+        | **Employee** | `John` | `johnpass123` |
+        | **C-level** | `Alan` | `ceo123` |
+        """)
+
+# --- CHAT INTERFACE ---
 def chat_interface():
-    """Main chat interface"""
-    st.title("🤖 RAG Chat Assistant")
-    
-    # Sidebar with user info
+    # Sidebar info
     with st.sidebar:
         st.title(f"👤 {st.session_state.username}")
-        st.write(f"**Role:** {st.session_state.role}")
+        st.success(f"Role: **{st.session_state.role.upper()}**")
+        if st.session_state.description:
+            st.caption(st.session_state.description)
         
-        if st.button("🔄 Refresh"):
+        st.markdown("---")
+        if st.button("Logout"):
+            st.session_state.authenticated = False
             st.session_state.messages = []
             st.rerun()
             
-        if st.button("🚪 Logout"):
-            st.session_state.authenticated = False
-            st.session_state.username = ""
-            st.session_state.role = ""
-            st.session_state.messages = []
-            st.session_state.auth_token = ""
-            st.rerun()
-    
-    # Display chat messages
+        st.markdown("### 🛠️ Debug Info")
+        st.markdown(f"- Auth Status: {'✅' if st.session_state.authenticated else '❌'}")
+        
+    st.header("💬 AI Assistant (RBAC Enabled)")
+
+    # Show chat history
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-    
-    # Chat input
-    if prompt := st.chat_input("Ask me anything..."):
-        # Add user message to chat
+
+    # User input
+    if prompt := st.chat_input("Enter your question... (Example: What is my salary this month?)"):
+        # Show user input
         st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        # Display user message
         with st.chat_message("user"):
             st.markdown(prompt)
-        
-        # Get AI response
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                try:
-                    # Call the API
-                    response, error = make_authenticated_request(
-                        "/query",
-                        method="post",
-                        data={"query": prompt}
-                    )
-                    
-                    if error:
-                        raise Exception(error)
-                    
-                    # Display AI response
-                    st.markdown(response.get("response", "No response received"))
-                    
-                    # Add AI response to chat history
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": response.get("response", "No response received")
-                    })
-                    
-                except Exception as e:
-                    error_msg = f"Error: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": error_msg
-                    })
 
-# Main app
+        # Process AI response
+        with st.chat_message("assistant"):
+            with st.spinner("Processing..."):
+                response_data, error = make_authenticated_request(
+                    "/query", 
+                    method="post", 
+                    data={"query": prompt}
+                )
+                
+                if error:
+                    st.error(error)
+                    final_response = f"⚠️ {error}"
+                else:
+                    # Get response (Support both 'answer' and 'response' key for backward compatibility)
+                    final_response = response_data.get("answer") or response_data.get("response") or "No response received."
+                    
+                    st.markdown(final_response)
+                    
+                    # If debug info from server, show it below
+                    if "user_role" in response_data:
+                        st.caption(f"🔒 Answered with role: `{response_data['user_role']}`")
+
+                # Save to history
+                st.session_state.messages.append({"role": "assistant", "content": final_response})
+
+# --- MAIN FUNCTION ---
 def main():
-    """Main app function"""
     if not st.session_state.authenticated:
-        login()
+        login_page()
     else:
         chat_interface()
 

@@ -12,7 +12,7 @@ from pathlib import Path
 # Load environment variables
 load_dotenv()
 MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
-CATEGORIES = ["engineering", "hr", "finance", "general", "marketing"]
+CATEGORIES = ["engineer", "hr", "finance", "general", "marketing"]
 VECTOR_STORE_DIR = Path("resources/vector_store")
 
 
@@ -26,9 +26,6 @@ embeddings_model = HuggingFaceEmbeddings(
 app = FastAPI()
 security = HTTPBasic()
 
-# Initialize RAG service
-rag_service = RAGService(categories=CATEGORIES, embedding_model=embeddings_model, persist_base_dir=str(VECTOR_STORE_DIR.absolute()))
-
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
@@ -38,21 +35,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request/Response models
-class QueryRequest(BaseModel):
-    query: str
-    category: Optional[str] = None
-
-class QueryResponse(BaseModel):
-    response: str
-    sources: List[Dict] = []
-
 # Dummy user database
 users_db: Dict[str, Dict[str, str]] = {
-    "Tony": {"password": "password123", "role": "engineering"},
-    "Bruce": {"password": " ", "role": "marketing"},
+    "Tony": {"password": "password123", "role": "engineer"},
+    "Bruce": {"password": "password123", "role": "marketing"},
     "Sam": {"password": "financepass", "role": "finance"},
-    "Peter": {"password": "pete123", "role": "engineering"},
+    "Peter": {"password": "pete123", "role": "engineer"},
     "Sid": {"password": "sidpass123", "role": "marketing"},
     "Natasha": {"password": "hrpass123", "role": "hr"},
     "Alan": {"password": "ceo123", "role": "c-level"},
@@ -60,55 +48,74 @@ users_db: Dict[str, Dict[str, str]] = {
 }
 
 # Authentication dependency
-def authenticate(credentials: HTTPBasicCredentials = Depends(security)) -> Dict[str, str]:
-    username = credentials.username
-    password = credentials.password
-    
-    if username not in users_db or users_db[username].get("password") != password:
+def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
+    user = users_db.get(credentials.username)
+    if not user or user["password"] != credentials.password:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Basic"},
         )
-    return {"username": username, "role": users_db[username]["role"]}
+    return {"username": credentials.username, "role": user["role"]}
 
-# Login endpoint
+# --- 2. INIT RAG SERVICE ---
+print("🚀 Init RAG Service...")
+rag_service = RAGService()
+print("✅ RAG Service ready!")
+
+# --- 3. MODELS ---
+class QueryRequest(BaseModel):
+    query: str
+
+
+class QueryResponse(BaseModel):
+    answer: str
+    user_role: str
+    debug_info: Optional[str] = None
+
+# --- 4. ENDPOINT ---
+@app.get("/")
+def health_check():
+    return {"status": "active", "service": "RAG RBAC System"}
+
 @app.get("/login")
 def login(user=Depends(authenticate)):
-    return {"message": f"Welcome {user['username']}!", "role": user["role"]}
+    """API to check user info after login"""
+    full_info = users_db.get(user['username'])
+    return {
+        "message": f"Welcome {user['username']}!",
+        "role": user["role"]
+    }
 
-# Query endpoint
 @app.post("/query", response_model=QueryResponse)
-async def query(
+async def query_endpoint(
     request: QueryRequest,
     user: dict = Depends(authenticate)
 ):
+    """
+    Main endpoint to ask questions.
+    RBAC logic will be handled inside RAGService based on 'user_role'.
+    """
     try:
-        # Get user role
-        role = user["role"]
+        user_role = user["role"]
+        query_text = request.query
         
-        # Get response from RAG service with role-based access
-        response = await rag_service.get_rag_response(
-            query=request.query,
-            role=role,
-            category=request.category  # Optional category filter
-        )
+        print(f"📡 API Query: '{query_text}' | User: {user['username']} ({user_role})")
+
+        # Call new ainvoke function in rag.py
+        # This function will automatically run through Router -> Check Permissions -> Data Agent or Vector Store
+        response_text = await rag_service.ainvoke(query=query_text, user_role=user_role)
         
         return QueryResponse(
-            response=response,
-            sources=[]  # Add sources if available
+            answer=str(response_text),
+            user_role=user_role,
+            debug_info="Processed via Hybrid RAG (Pandas/Vector)"
         )
         
     except Exception as e:
+        print(f"❌ Error: {str(e)}")
         raise HTTPException(
             status_code=500,
-            detail=f"Error processing query: {str(e)}"
+            detail=f"System error: {str(e)}"
         )
 
-# Get user info endpoint
-@app.get("/user/info")
-async def get_user_info(user: dict = Depends(authenticate)):
-    return {
-        "username": user["username"],
-        "role": user["role"]
-    }
